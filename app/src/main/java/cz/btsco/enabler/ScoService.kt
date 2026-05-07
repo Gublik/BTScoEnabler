@@ -6,18 +6,29 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
-import android.media.AudioFormat
-import android.media.AudioRecord
-import android.media.MediaRecorder
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 
 class ScoService : Service() {
 
-    private var audioRecord: AudioRecord? = null
+    private lateinit var audioManager: AudioManager
+    private val handler = Handler(Looper.getMainLooper())
     private var isRunning = false
-    private var recordThread: Thread? = null
+
+    private val keepAliveRunnable = object : Runnable {
+        override fun run() {
+            if (isRunning) {
+                refreshSco()
+                handler.postDelayed(this, 7000)
+            }
+        }
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
         createNotificationChannel()
 
         val openIntent = PendingIntent.getActivity(
@@ -27,45 +38,39 @@ class ScoService : Service() {
         )
 
         val notification = Notification.Builder(this, "sco_channel")
-            .setContentTitle("🎧 BT Mic Enabler")
-            .setContentText("BT mikrofon aktivní – Wispr Flow ho může použít")
+            .setContentTitle("🎧 BT Mic Enabler aktivní")
+            .setContentText("Mikrofon sluchátek dostupný pro Wispr Flow")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentIntent(openIntent)
             .setOngoing(true)
             .build()
 
         startForeground(1, notification)
-        startSilentRecording()
+
+        isRunning = true
+        handler.post(keepAliveRunnable)
 
         return START_STICKY
     }
 
-    private fun startSilentRecording() {
-        val sampleRate = 8000
-        val channelConfig = AudioFormat.CHANNEL_IN_MONO
-        val audioFormat = AudioFormat.ENCODING_PCM_16BIT
-        val bufferSize = AudioRecord.getMinBufferSize(
-            sampleRate, channelConfig, audioFormat
-        ).coerceAtLeast(1024)
-
+    private fun refreshSco() {
         try {
-            audioRecord = AudioRecord(
-                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-                sampleRate, channelConfig, audioFormat, bufferSize
-            )
-
-            if (audioRecord?.state == AudioRecord.STATE_INITIALIZED) {
-                audioRecord?.startRecording()
-                isRunning = true
-
-                recordThread = Thread {
-                    val buffer = ShortArray(bufferSize)
-                    while (isRunning) {
-                        audioRecord?.read(buffer, 0, bufferSize)
-                        Thread.sleep(10)
-                    }
-                }.also { it.start() }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                val devices = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS)
+                val scoDevice = devices.firstOrNull {
+                    it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+                }
+                if (scoDevice != null) {
+                    audioManager.setCommunicationDevice(scoDevice)
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                if (!audioManager.isBluetoothScoOn) {
+                    audioManager.startBluetoothSco()
+                    audioManager.isBluetoothScoOn = true
+                }
             }
+            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -73,10 +78,7 @@ class ScoService : Service() {
 
     override fun onDestroy() {
         isRunning = false
-        recordThread?.interrupt()
-        audioRecord?.stop()
-        audioRecord?.release()
-        audioRecord = null
+        handler.removeCallbacks(keepAliveRunnable)
         super.onDestroy()
     }
 
@@ -84,7 +86,7 @@ class ScoService : Service() {
         val channel = NotificationChannel(
             "sco_channel", "BT Mikrofon",
             NotificationManager.IMPORTANCE_LOW
-        ).apply { description = "Udržuje aktivní Bluetooth mikrofon" }
+        ).apply { description = "Udržuje Bluetooth SCO aktivní" }
         getSystemService(NotificationManager::class.java)
             .createNotificationChannel(channel)
     }
