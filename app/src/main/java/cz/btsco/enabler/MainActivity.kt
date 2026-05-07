@@ -43,8 +43,7 @@ class MainActivity : AppCompatActivity() {
     private fun startSco() {
         val devices = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS)
         val scoDevice = devices.firstOrNull {
-            it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
-            it.type == AudioDeviceInfo.TYPE_BLUETOOTH_HEADSET
+    it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && scoDevice != null) {
